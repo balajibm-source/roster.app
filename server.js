@@ -50,7 +50,7 @@ function rowToCreator(row) {
 
 // ---------- List + filter ----------
 app.get('/api/creators', (req, res) => {
-  const { q, niche, platform, minFollowers, minEr, risk } = req.query;
+  const { q, niche, platform, minFollowers, minEr, risk, language, state, minReach90d } = req.query;
   const rows = db.prepare('SELECT * FROM creators ORDER BY updated_at DESC').all();
   let creators = rows.map(rowToCreator);
 
@@ -62,12 +62,22 @@ app.get('/api/creators', (req, res) => {
       return hay.includes(needle);
     });
   }
+  if (language) creators = creators.filter(c => (c.language || '').toLowerCase() === language.toLowerCase());
+  if (state) creators = creators.filter(c => (c.state || '').toLowerCase() === state.toLowerCase());
+  if (minReach90d) {
+    const min = Number(minReach90d);
+    creators = creators.filter(c => {
+      const total = (c.platforms || []).reduce((s, p) => s + (Number(p.reach90d) || (Number(p.avgMonthlyViews) || 0) * 3), 0);
+      return total >= min;
+    });
+  }
   if (niche) creators = creators.filter(c => (c.niches || []).includes(niche));
   if (platform) creators = creators.filter(c => (c.platforms || []).some(p => p.platform === platform));
   if (minFollowers) {
     const min = Number(minFollowers);
     creators = creators.filter(c => Math.max(0, ...(c.platforms || []).map(p => Number(p.followers) || 0)) >= min);
   }
+
   if (minEr) {
     const min = Number(minEr);
     creators = creators.filter(c => deriveStats(c).avgEr >= min);
@@ -150,6 +160,21 @@ app.get('/api/stats', (req, res) => {
   const avgEr = ers.length ? ers.reduce((a, b) => a + b, 0) / ers.length : null;
   const highRisk = creators.filter(c => c.riskLevel === 'high').length;
   res.json({ count: creators.length, totalReach, avgEr, highRisk });
+});
+
+// ---------- Languages (for language-first landing view) ----------
+app.get('/api/languages', (req, res) => {
+  const rows = db.prepare('SELECT * FROM creators').all();
+  const creators = rows.map(rowToCreator);
+  const counts = {};
+  creators.forEach(c => {
+    const lang = (c.language || '').trim();
+    if (!lang) return;
+    if (!counts[lang]) counts[lang] = { language: lang, count: 0, totalReach: 0 };
+    counts[lang].count += 1;
+    counts[lang].totalReach += deriveStats(c).totalFollowers;
+  });
+  res.json(Object.values(counts).sort((a, b) => b.count - a.count));
 });
 
 // ---------- CSV import/export ----------
